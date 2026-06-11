@@ -1,0 +1,10 @@
+{
+    "email":"youremail@gmail.com",
+    "container_name":"e-commerce",
+    "inbound_folder":"ref/input",
+    "raw_folder":"ref/raw",
+    "struct_folder":"ref/struct",
+    "archive_folder":"archive",
+	"no_of_files":3,
+    "logic_app_url":"yourlogicappurl"   
+}
