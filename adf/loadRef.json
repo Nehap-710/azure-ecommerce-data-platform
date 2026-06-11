@@ -1,0 +1,399 @@
+{
+   "name": "loadRef",
+   "properties": {
+       "activities": [
+           {
+               "name": "Lookup_config_file",
+               "type": "Lookup",
+               "dependsOn": [],
+               "policy": {
+                   "timeout": "0.12:00:00",
+                   "retry": 0,
+                   "retryIntervalInSeconds": 30,
+                   "secureOutput": false,
+                   "secureInput": false
+               },
+               "userProperties": [],
+               "typeProperties": {
+                   "source": {
+                       "type": "JsonSource",
+                       "storeSettings": {
+                           "type": "AzureBlobFSReadSettings",
+                           "recursive": true,
+                           "enablePartitionDiscovery": false
+                       },
+                       "formatSettings": {
+                           "type": "JsonReadSettings"
+                       }
+                   },
+                   "dataset": {
+                       "referenceName": "ref_config",
+                       "type": "DatasetReference"
+                   }
+               }
+           },
+           {
+               "name": "Check if all files are available",
+               "type": "Until",
+               "dependsOn": [
+                   {
+                       "activity": "Lookup_config_file",
+                       "dependencyConditions": [
+                           "Succeeded"
+                       ]
+                   }
+               ],
+               "userProperties": [],
+               "typeProperties": {
+                   "expression": {
+                       "value": "@equals(length(activity('Check for files').output.childItems), activity('Lookup_config_file').output.firstRow.no_of_files)",
+                       "type": "Expression"
+                   },
+                   "activities": [
+                       {
+                           "name": "Check for files",
+                           "type": "GetMetadata",
+                           "dependsOn": [],
+                           "policy": {
+                               "timeout": "0.12:00:00",
+                               "retry": 0,
+                               "retryIntervalInSeconds": 30,
+                               "secureOutput": false,
+                               "secureInput": false
+                           },
+                           "userProperties": [],
+                           "typeProperties": {
+                               "dataset": {
+                                   "referenceName": "Files",
+                                   "type": "DatasetReference",
+                                   "parameters": {
+                                       "container": {
+                                           "value": "@activity('Lookup_config_file').output.firstRow.container_name",
+                                           "type": "Expression"
+                                       },
+                                       "folder": {
+                                           "value": "@activity('Lookup_config_file').output.firstRow.inbound_folder",
+                                           "type": "Expression"
+                                       }
+                                   }
+                               },
+                               "fieldList": [
+                                   "childItems"
+                               ],
+                               "storeSettings": {
+                                   "type": "AzureBlobFSReadSettings",
+                                   "recursive": true,
+                                   "enablePartitionDiscovery": false
+                               },
+                               "formatSettings": {
+                                   "type": "DelimitedTextReadSettings"
+                               }
+                           }
+                       },
+                       {
+                           "name": "Wait till all files land",
+                           "type": "Wait",
+                           "dependsOn": [
+                               {
+                                   "activity": "Check for files",
+                                   "dependencyConditions": [
+                                       "Succeeded"
+                                   ]
+                               }
+                           ],
+                           "userProperties": [],
+                           "typeProperties": {
+                               "waitTimeInSeconds": 60
+                           }
+                       }
+                   ],
+                   "timeout": "0.12:00:00"
+               }
+           },
+           {
+               "name": "Load Reference Data",
+               "type": "DatabricksJob",
+               "dependsOn": [
+                   {
+                       "activity": "Check if all files are available",
+                       "dependencyConditions": [
+                           "Succeeded"
+                       ]
+                   }
+               ],
+               "policy": {
+                   "timeout": "0.12:00:00",
+                   "retry": 0,
+                   "retryIntervalInSeconds": 30,
+                   "secureOutput": false,
+                   "secureInput": false
+               },
+               "userProperties": [],
+               "typeProperties": {
+                   "jobParameters": {
+                       "ingestion_date": {
+                           "value": "@formatDateTime(utcNow(), 'yyyy-MM-dd')\n",
+                           "type": "Expression"
+                       },
+                       "pipeline_run_id": {
+                           "value": "@pipeline().RunId",
+                           "type": "Expression"
+                       }
+                   }
+               },
+               "linkedServiceName": {
+                   "referenceName": "ls_e_commerce_adb",
+                   "type": "LinkedServiceReference"
+               }
+           },
+           {
+               "name": "Success Email",
+               "type": "WebActivity",
+               "dependsOn": [
+                   {
+                       "activity": "Load Reference Data",
+                       "dependencyConditions": [
+                           "Succeeded"
+                       ]
+                   }
+               ],
+               "policy": {
+                   "timeout": "0.12:00:00",
+                   "retry": 0,
+                   "retryIntervalInSeconds": 30,
+                   "secureOutput": false,
+                   "secureInput": false
+               },
+               "userProperties": [],
+               "typeProperties": {
+                   "method": "POST",
+                   "headers": {
+                       "Content-type": "application/json"
+                   },
+                   "url": {
+                       "value": "@activity('Lookup_config_file').output.firstRow.logic_app_url",
+                       "type": "Expression"
+                   },
+                   "body": {
+                       "pipelineName": "@pipeline().Pipeline",
+                       "runId": "@pipeline().RunId",
+                       "status": "Success",
+                       "triggerTime": "@utcNow()",
+                       "environment": "Production",
+                       "message": "Reference data loaded successfully into the table.",
+                       "recipients": "@activity('Lookup_config_file').output.firstRow.email"
+                   }
+               }
+           },
+           {
+               "name": "Send Failure Email",
+               "type": "WebActivity",
+               "dependsOn": [
+                   {
+                       "activity": "Load Reference Data",
+                       "dependencyConditions": [
+                           "Failed"
+                       ]
+                   }
+               ],
+               "policy": {
+                   "timeout": "0.12:00:00",
+                   "retry": 0,
+                   "retryIntervalInSeconds": 30,
+                   "secureOutput": false,
+                   "secureInput": false
+               },
+               "userProperties": [],
+               "typeProperties": {
+                   "method": "POST",
+                   "url": {
+                       "value": "@activity('Lookup_config_file').output.firstRow.logic_app_url",
+                       "type": "Expression"
+                   },
+                   "body": {
+                       "pipelineName": "@pipeline().Pipeline",
+                       "runId": "@pipeline().RunId",
+                       "status": "Failure",
+                       "triggerTime": "@utcNow()",
+                       "environment": "Production",
+                       "message": "@activity('Load Reference Data').error.message",
+                       "recipients": "@activity('Lookup_config_file').output.firstRow.email"
+                   }
+               }
+           },
+           {
+               "name": "Move data from input to archive",
+               "type": "ForEach",
+               "dependsOn": [
+                   {
+                       "activity": "Success Email",
+                       "dependencyConditions": [
+                           "Succeeded"
+                       ]
+                   }
+               ],
+               "userProperties": [],
+               "typeProperties": {
+                   "items": {
+                       "value": "@activity('Check for files').output.childItems",
+                       "type": "Expression"
+                   },
+                   "isSequential": true,
+                   "activities": [
+                       {
+                           "name": "Copy data from source to archive",
+                           "type": "Copy",
+                           "dependsOn": [],
+                           "policy": {
+                               "timeout": "0.12:00:00",
+                               "retry": 0,
+                               "retryIntervalInSeconds": 30,
+                               "secureOutput": false,
+                               "secureInput": false
+                           },
+                           "userProperties": [],
+                           "typeProperties": {
+                               "source": {
+                                   "type": "DelimitedTextSource",
+                                   "storeSettings": {
+                                       "type": "AzureBlobFSReadSettings",
+                                       "recursive": true,
+                                       "enablePartitionDiscovery": false
+                                   },
+                                   "formatSettings": {
+                                       "type": "DelimitedTextReadSettings"
+                                   }
+                               },
+                               "sink": {
+                                   "type": "DelimitedTextSink",
+                                   "storeSettings": {
+                                       "type": "AzureBlobFSWriteSettings"
+                                   },
+                                   "formatSettings": {
+                                       "type": "DelimitedTextWriteSettings",
+                                       "quoteAllText": true,
+                                       "fileExtension": ""
+                                   }
+                               },
+                               "enableStaging": false,
+                               "translator": {
+                                   "type": "TabularTranslator",
+                                   "typeConversion": true,
+                                   "typeConversionSettings": {
+                                       "allowDataTruncation": true,
+                                       "treatBooleanAsNumber": false
+                                   }
+                               }
+                           },
+                           "inputs": [
+                               {
+                                   "referenceName": "input_ref_files",
+                                   "type": "DatasetReference",
+                                   "parameters": {
+                                       "container": {
+                                           "value": "@activity('Lookup_config_file').output.firstRow.container_name",
+                                           "type": "Expression"
+                                       },
+                                       "folder": {
+                                           "value": "@activity('Lookup_config_file').output.firstRow.inbound_folder",
+                                           "type": "Expression"
+                                       },
+                                       "file": {
+                                           "value": "@item().name",
+                                           "type": "Expression"
+                                       }
+                                   }
+                               }
+                           ],
+                           "outputs": [
+                               {
+                                   "referenceName": "archive_ref_files",
+                                   "type": "DatasetReference",
+                                   "parameters": {
+                                       "container": {
+                                           "value": "@activity('Lookup_config_file').output.firstRow.container_name",
+                                           "type": "Expression"
+                                       },
+                                       "folder": {
+                                           "value": "@concat(activity('Lookup_config_file').output.firstRow.archive_folder,'/',formatDateTime(utcNow(),'yyyy-MM-dd'))",
+                                           "type": "Expression"
+                                       }
+                                   }
+                               }
+                           ]
+                       },
+                       {
+                           "name": "Delete input files",
+                           "type": "Delete",
+                           "dependsOn": [
+                               {
+                                   "activity": "Copy data from source to archive",
+                                   "dependencyConditions": [
+                                       "Succeeded"
+                                   ]
+                               }
+                           ],
+                           "policy": {
+                               "timeout": "0.12:00:00",
+                               "retry": 0,
+                               "retryIntervalInSeconds": 30,
+                               "secureOutput": false,
+                               "secureInput": false
+                           },
+                           "userProperties": [],
+                           "typeProperties": {
+                               "dataset": {
+                                   "referenceName": "input_ref_files",
+                                   "type": "DatasetReference",
+                                   "parameters": {
+                                       "container": {
+                                           "value": "@activity('Lookup_config_file').output.firstRow.container_name",
+                                           "type": "Expression"
+                                       },
+                                       "folder": {
+                                           "value": "@activity('Lookup_config_file').output.firstRow.inbound_folder",
+                                           "type": "Expression"
+                                       },
+                                       "file": {
+                                           "value": "@item().name",
+                                           "type": "Expression"
+                                       }
+                                   }
+                               },
+                               "enableLogging": false,
+                               "storeSettings": {
+                                   "type": "AzureBlobFSReadSettings",
+                                   "recursive": true,
+                                   "enablePartitionDiscovery": false
+                               }
+                           }
+                       }
+                   ]
+               }
+           },
+           {
+               "name": "Fail the pipeline",
+               "type": "Fail",
+               "dependsOn": [
+                   {
+                       "activity": "Send Failure Email",
+                       "dependencyConditions": [
+                           "Succeeded"
+                       ]
+                   }
+               ],
+               "userProperties": [],
+               "typeProperties": {
+                   "message": "fail",
+                   "errorCode": "1"
+               }
+           }
+       ],
+       "folder": {
+           "name": "E-commerce"
+       },
+       "annotations": [],
+       "lastPublishTime": "2026-05-29T16:21:56Z"
+   },
+   "type": "Microsoft.DataFactory/factories/pipelines"
+}
